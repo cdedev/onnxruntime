@@ -47,6 +47,11 @@ Status SetupOptimizerParams(
   ORT_RETURN_IF_NOT(config.optimizer_config.has_value());
   const auto& optimizer_config = config.optimizer_config.value();
 
+  TrainingSession::OptimizerState init_optimizer_states;
+  if (config.init_optimizer_states.has_value()){
+    init_optimizer_states = config.init_optimizer_states.value();
+  }
+
   std::unordered_map<std::string, OptimizerNodeConfig> opt_node_configs{};
   for (const auto& weight_name : weight_names_to_train) {
     OptimizerNodeConfig opt_node_config{};
@@ -74,8 +79,23 @@ Status SetupOptimizerParams(
     if (mixed_precision_weight_name_it != fp32_weight_names_to_mixed_precision_node_args.end()) {
       opt_node_config.mixed_precision_weight_arg = mixed_precision_weight_name_it->second;
     }
+
+    // check if initial optimizer states have been provided for weight
+    if (init_optimizer_states.size() > 0){
+      auto optim_state_it = init_optimizer_states.find(weight_name);
+      if (optim_state_it != init_optimizer_states.end()) {
+        auto state = optim_state_it->second;
+        opt_node_config.initial_states = std::move(state);
+      }
+    }    
+
     opt_node_configs.emplace(weight_name, std::move(opt_node_config));
   }
+
+  // for(const auto& optim_state_it : config.init_optimizer_states){
+  //   auto opt_config = opt_node_configs.at(optim_state_it.first);
+  //   opt_config.initial_states = &(optim_state_it->second)
+  // }
 
   OptimizerGraphConfig opt_graph_config{};
   opt_graph_config.use_mixed_precision = config.mixed_precision_config.has_value();
@@ -103,6 +123,15 @@ Status SetupOptimizerParams(
           : static_cast<int64_t>(hvd::ReduceOp::ADASUM);
 #endif
   opt_graph_config.deepspeed_zero = optimizer_config.deepspeed_zero;
+
+  // check if shared initial optimizer states have been provided
+  if (init_optimizer_states.size() > 0){
+    auto optim_state_it = init_optimizer_states.find(onnxruntime::training::SHARED_STATES_KEY);
+    if (optim_state_it != init_optimizer_states.end()) {
+      auto state = optim_state_it->second;
+      opt_graph_config.shared_optimizer_states = std::move(state);
+    }
+  }
   opt_node_configs_result = std::move(opt_node_configs);
   opt_graph_config_result = std::move(opt_graph_config);
 
